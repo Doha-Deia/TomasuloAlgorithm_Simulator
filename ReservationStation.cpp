@@ -30,7 +30,7 @@ void ReservationStation::setValues(int OP, int Vj_val, int Vk_val, int Qj_tag, i
     Dest = destROB;
     result = 0;
     resultReady = false;
-    lat = 0;
+    lat = 0;   // should be updated
 }
 
 // Reset RS for next instruction in wrtting stage
