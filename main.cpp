@@ -6,6 +6,7 @@
 #include "ROB.h"
 #include "Instructions.h"
 #include "RegisterStatus.h"
+#include <fstream>
 
 using namespace std;
 
@@ -125,7 +126,7 @@ int main()
             break;
         }
     }
-
+ 
     totalCycles = cycle - 1;
 
     // Print results
@@ -134,53 +135,128 @@ int main()
     return 0;
 }
 
+// void loadProgram(vector<Instructions> &program)
+// {
+//     cout << "Enter starting address for program: ";
+//     cin >> startingAddress;
+//     PC = startingAddress;
+
+//     int numInstr;
+//     cout << "Enter number of instructions: ";
+//     cin >> numInstr;
+//     cin.ignore();
+
+//     cout << "\nEnter instructions (format: OPCODE operands):" << endl;
+//     cout << "Opcodes: 1=LOAD, 2=STORE, 3=BEQ, 4=ADD, 5=SUB, 6=NAND, 7=MUL, 8=CALL, 9=RET" << endl;
+
+//     for (int i = 0; i < numInstr; i++)
+//     {
+//         int op;
+//         string line;
+//         cout << "Instruction " << i << " opcode: ";
+//         cin >> op;
+//         cin.ignore();
+//         cout << "Instruction " << i << " operands: ";
+//         getline(cin, line);
+
+//         Instructions instr;
+//         instr.parse(line, op);
+//         instr.address = startingAddress + i;
+//         program.push_back(instr);
+//     }
+// }
+
+// void loadMemoryData()
+// {
+//     int numData;
+//     cout << "\nEnter number of memory data items: ";
+//     cin >> numData;
+
+//     for (int i = 0; i < numData; i++)
+//     {
+//         int addr, value;
+//         cout << "Data " << i << " address: ";
+//         cin >> addr;
+//         cout << "Data " << i << " value: ";
+//         cin >> value;
+//         memory[addr] = value;
+//     }
+// }
+
 void loadProgram(vector<Instructions> &program)
 {
-    cout << "Enter starting address for program: ";
-    cin >> startingAddress;
+    cout << "Enter program filename: ";
+    string filename;
+    cin >> filename;
+
+    ifstream infile(filename);
+    if (!infile.is_open()) {
+        cout << "Error opening file!\n";
+        exit(1);
+    }
+
+    program.clear();
+    infile >> startingAddress;
     PC = startingAddress;
 
-    int numInstr;
-    cout << "Enter number of instructions: ";
-    cin >> numInstr;
-    cin.ignore();
+    int op, a, b, c;
 
-    cout << "\nEnter instructions (format: OPCODE operands):" << endl;
-    cout << "Opcodes: 1=LOAD, 2=STORE, 3=BEQ, 4=ADD, 5=SUB, 6=NAND, 7=MUL, 8=CALL, 9=RET" << endl;
-
-    for (int i = 0; i < numInstr; i++)
-    {
-        int op;
-        string line;
-        cout << "Instruction " << i << " opcode: ";
-        cin >> op;
-        cin.ignore();
-        cout << "Instruction " << i << " operands: ";
-        getline(cin, line);
-
+    while (infile >> op >> a >> b >> c) {
         Instructions instr;
-        instr.parse(line, op);
-        instr.address = startingAddress + i;
+        instr.opcode = op;
+
+        if (op == 1) {               // LOAD rd, offset(rs1)
+            instr.rd = a;
+            instr.rs1 = b;
+            instr.immediate = c;
+        }
+        else if (op == 2) {          // STORE rs2, offset(rs1)
+            instr.rs2 = a;
+            instr.rs1 = b;
+            instr.immediate = c;
+        }
+        else if (op == 3) {          // BEQ rs1, rs2, offset
+            instr.rs1 = a;
+            instr.rs2 = b;
+            instr.immediate = c;
+        }
+        else {                       // ADD, SUB, NAND, MUL
+            instr.rd = a;
+            instr.rs1 = b;
+            instr.rs2 = c;
+        }
+
+        instr.address = startingAddress + program.size();
         program.push_back(instr);
     }
+
+    infile.close();
 }
+
 
 void loadMemoryData()
 {
-    int numData;
-    cout << "\nEnter number of memory data items: ";
-    cin >> numData;
+    cout << "Enter memory filename: ";
+    string fname;
+    cin >> fname;
 
-    for (int i = 0; i < numData; i++)
-    {
-        int addr, value;
-        cout << "Data " << i << " address: ";
-        cin >> addr;
-        cout << "Data " << i << " value: ";
-        cin >> value;
-        memory[addr] = value;
+    ifstream memfile(fname);
+    if (!memfile.is_open()) {
+        cout << "Error loading memory file!\n";
+        exit(1);
     }
+
+    memory.clear();
+    int address, value;
+
+    while (memfile >> address >> value) {
+        memory[address] = value;
+    }
+
+    memfile.close();
 }
+
+
 
 int getLatency(int opcode)
 {

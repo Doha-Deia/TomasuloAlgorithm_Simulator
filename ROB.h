@@ -28,10 +28,11 @@ class ROB {
         void remove();
 
         const ROBEntry* getEntries() const;
-
-    private:
         int head;
         int tail;
+
+    private:
+
         int count;
         ROBEntry entries[8];
 };
