@@ -1,25 +1,35 @@
 #ifndef REGISTERSTATUS_H
 #define REGISTERSTATUS_H
-#include <vector>
-using namespace std;
 
-class RegisterStatus {
-    
-    static const int REG_COUNT = 8;
-
-    public:
-        int robTag[REG_COUNT];
-
-        RegisterStatus();
-        RegisterStatus( vector <int>tag);
-        
-
-        void setTag(int regIndex, int robEntry);
-        int getTag(int regIndex);
-        bool isBusy();
-        void clearTag(int regIndex);
-        void clearAllTags();
+// Simple struct to represent a register entry
+struct RegEntry
+{
+    int regNumber; // 0 to 7
+    int robNumber; // 0 if not busy
 };
 
+class RegisterStatus
+{
+public:
+    static const int REG_COUNT = 8;
+    RegEntry table[REG_COUNT];
 
-#endif //REGISTERSTATUS_H
+    RegisterStatus();
+
+    // Set the ROB number for a given register number
+    void setROB(int regNumber, int robNumber);
+
+    // Get the ROB number for a given register number
+    int getROB(int regNumber);
+
+    // Check if any register is busy
+    bool isBusy();
+
+    // Clear a specific register
+    void clearRegister(int regNumber);
+
+    // Clear all registers
+    void clearAll();
+};
+
+#endif // REGISTERSTATUS_H

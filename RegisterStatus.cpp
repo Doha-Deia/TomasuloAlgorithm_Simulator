@@ -1,43 +1,59 @@
 #include "RegisterStatus.h"
 
-RegisterStatus::RegisterStatus() {
+// Constructor: initialize registers
+RegisterStatus::RegisterStatus()
+{
+    for (int i = 0; i < REG_COUNT; ++i)
+    {
+        table[i].regNumber = i;
+        table[i].robNumber = 0;
+    }
+}
 
-    for (int i = 0; i < 8; ++i) {
-        robTag[i] = 0;
+// Set ROB number
+void RegisterStatus::setROB(int regNumber, int robNumber)
+{
+    if (regNumber >= 0 && regNumber < REG_COUNT)
+    {
+        table[regNumber].robNumber = robNumber;
     }
 }
-RegisterStatus:: RegisterStatus(vector <int>tag) {
 
-    for (int i = 0; i < REG_COUNT; ++i) {
-        robTag[i] = tag[i];
+// Get ROB number
+int RegisterStatus::getROB(int regNumber)
+{
+    if (regNumber >= 0 && regNumber < REG_COUNT)
+    {
+        return table[regNumber].robNumber;
     }
+    return -1;
 }
-void RegisterStatus::setTag(int regIndex, int robEntry) {
-    if (regIndex >= 0 && regIndex < REG_COUNT) {
-        robTag[regIndex] = robEntry;
-    }
-}
-int RegisterStatus::getTag(int regIndex) {
-    if (regIndex >= 0 && regIndex < REG_COUNT) {
-        return robTag[regIndex];
-    }
-    return -1; // Invalid index
-}
-bool RegisterStatus::isBusy() {
-    for (int i = 0; i < REG_COUNT; ++i) {
-        if (robTag[i] != 0) {
+
+// Check if any register is busy
+bool RegisterStatus::isBusy()
+{
+    for (int i = 0; i < REG_COUNT; ++i)
+    {
+        if (table[i].robNumber != 0)
             return true;
-        }
     }
     return false;
 }
-void RegisterStatus::clearTag(int regIndex){
-    if (regIndex >= 0 && regIndex < REG_COUNT) {
-        robTag[regIndex] = 0;
+
+// Clear a specific register
+void RegisterStatus::clearRegister(int regNumber)
+{
+    if (regNumber >= 0 && regNumber < REG_COUNT)
+    {
+        table[regNumber].robNumber = 0;
     }
 }
-void RegisterStatus::clearAllTags() {
-    for (int i = 0; i < REG_COUNT; ++i) {
-        robTag[i] = 0;
+
+// Clear all registers
+void RegisterStatus::clearAll()
+{
+    for (int i = 0; i < REG_COUNT; ++i)
+    {
+        table[i].robNumber = 0;
     }
 }
