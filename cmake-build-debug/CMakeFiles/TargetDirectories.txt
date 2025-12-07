@@ -1,3 +1,0 @@
-C:/Users/ASUS Zenbook/OneDrive/Documents/GitHub/TomasuloAlgorithm_Simulator/cmake-build-debug/CMakeFiles/simulator.dir
-C:/Users/ASUS Zenbook/OneDrive/Documents/GitHub/TomasuloAlgorithm_Simulator/cmake-build-debug/CMakeFiles/edit_cache.dir
-C:/Users/ASUS Zenbook/OneDrive/Documents/GitHub/TomasuloAlgorithm_Simulator/cmake-build-debug/CMakeFiles/rebuild_cache.dir

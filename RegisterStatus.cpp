@@ -8,7 +8,7 @@ RegisterStatus::RegisterStatus() {
 }
 RegisterStatus:: RegisterStatus(vector <int>tag) {
 
-    for (int i = 0; i < 32; ++i) {
+    for (int i = 0; i < REG_COUNT; ++i) {
         robTag[i] = tag[i];
     }
 }

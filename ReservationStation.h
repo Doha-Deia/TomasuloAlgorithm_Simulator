@@ -1,10 +1,8 @@
 //
 // Created by ASUS Zenbook on 12/3/2025.
 //
-
 #ifndef RESERVATIONSTATION_H
 #define RESERVATIONSTATION_H
-
 
 
 class ReservationStation {
