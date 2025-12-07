@@ -126,7 +126,7 @@ int main()
             break;
         }
     }
- 
+
     totalCycles = cycle - 1;
 
     // Print results
@@ -190,7 +190,8 @@ void loadProgram(vector<Instructions> &program)
     cin >> filename;
 
     ifstream infile(filename);
-    if (!infile.is_open()) {
+    if (!infile.is_open())
+    {
         cout << "Error opening file!\n";
         exit(1);
     }
@@ -201,26 +202,31 @@ void loadProgram(vector<Instructions> &program)
 
     int op, a, b, c;
 
-    while (infile >> op >> a >> b >> c) {
+    while (infile >> op >> a >> b >> c)
+    {
         Instructions instr;
         instr.opcode = op;
 
-        if (op == 1) {               // LOAD rd, offset(rs1)
+        if (op == 1)
+        { // LOAD rd, offset(rs1)
             instr.rd = a;
             instr.rs1 = b;
             instr.immediate = c;
         }
-        else if (op == 2) {          // STORE rs2, offset(rs1)
+        else if (op == 2)
+        { // STORE rs2, offset(rs1)
             instr.rs2 = a;
             instr.rs1 = b;
             instr.immediate = c;
         }
-        else if (op == 3) {          // BEQ rs1, rs2, offset
+        else if (op == 3)
+        { // BEQ rs1, rs2, offset
             instr.rs1 = a;
             instr.rs2 = b;
             instr.immediate = c;
         }
-        else {                       // ADD, SUB, NAND, MUL
+        else
+        { // ADD, SUB, NAND, MUL
             instr.rd = a;
             instr.rs1 = b;
             instr.rs2 = c;
@@ -233,7 +239,6 @@ void loadProgram(vector<Instructions> &program)
     infile.close();
 }
 
-
 void loadMemoryData()
 {
     cout << "Enter memory filename: ";
@@ -241,7 +246,8 @@ void loadMemoryData()
     cin >> fname;
 
     ifstream memfile(fname);
-    if (!memfile.is_open()) {
+    if (!memfile.is_open())
+    {
         cout << "Error loading memory file!\n";
         exit(1);
     }
@@ -249,14 +255,13 @@ void loadMemoryData()
     memory.clear();
     int address, value;
 
-    while (memfile >> address >> value) {
+    while (memfile >> address >> value)
+    {
         memory[address] = value;
     }
 
     memfile.close();
 }
-
-
 
 int getLatency(int opcode)
 {
@@ -572,7 +577,8 @@ void printResults(vector<Instructions> &program)
              << setw(10) << program[i].execStartCycle
              << setw(10) << program[i].execEndCycle
              << setw(8) << program[i].writeCycle
-             << setw(8) << program[i].commitCycle << endl;
+             << setw(8) << program[i].commitCycle
+             << endl;
     }
 
     cout << "\n=== Performance Metrics ===" << endl;
