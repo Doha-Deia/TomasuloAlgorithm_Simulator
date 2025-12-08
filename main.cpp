@@ -28,11 +28,15 @@ const int ADD_SUB_LATENCY = 2;
 const int NAND_LATENCY = 1;
 const int MUL_LATENCY = 12;
 
+// Memory (simulation only - for tracking)
+map<int, int> memory;
+
 // Registers
 int registers[8] = {0}; // R0-R7, R0 always 0
 
 // Program Counter
 int PC = 0;
+int startingAddress = 0;
 
 // Statistics
 int totalCycles = 0;
@@ -42,6 +46,7 @@ int branchMispredictions = 0;
 
 // Function prototypes
 void loadProgram(vector<Instructions> &program);
+void loadMemoryData();
 int getLatency(int opcode);
 
 // Find free Reservation Station
@@ -54,7 +59,9 @@ int findFreeRS(vector<ReservationStation> &RS)
     }
     return -1;
 }
+
 void printResults(vector<Instructions> &program);
+
 int main()
 {
     vector<ReservationStation> LoadRS(Num_Load_RS);
@@ -65,7 +72,7 @@ int main()
     vector<ReservationStation> NandRS(Num_Nand_RS);
     vector<ReservationStation> MulRS(Num_Mul_RS);
 
-    int RegFile[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    int RegFile[8] = {0, 1, 2, 3, 4, 5, 6, 7}; // R0 must be 0
 
     ROB ROB_Table;
     RegisterStatus regStatus;
@@ -74,10 +81,11 @@ int main()
     cout << "=== Tomasulo Algorithm Simulator ===" << endl
          << endl;
 
-    // Load program and data
+    // Load program and memory data
     loadProgram(program);
+    loadMemoryData();
 
-    int instrIndex = 0; // Next instruction to issue
+    int instrIndex = 0; // Tracks which instruction to issue next (index in program vector)
     int cycle = 1;
     bool done = false;
 
@@ -86,22 +94,17 @@ int main()
     {
         cout << "\n--- Cycle " << cycle << " ---" << endl;
 
-        // ISSUE STAGE
-
-        if (PC < program.size())
+        // ============ ISSUE STAGE ============
+        if (instrIndex < program.size())
         {
-
-            Instructions &inst = program[PC];
+            Instructions &inst = program[instrIndex];
             int opcode = inst.opcode;
 
             // 1. Check ROB availability
             if (!ROB_Table.isFull())
             {
-
                 // Pick correct RS list depending on opcode
                 vector<ReservationStation> *RS_list = nullptr;
-
-                // standard opcode for facilitating
 
                 if (opcode == 1)
                     RS_list = &LoadRS;
@@ -122,52 +125,85 @@ int main()
 
                 if (rsIndex != -1)
                 { // RS AVAILABLE
+                    // Allocate ROB entry
+                    string type = (opcode == 2) ? "STORE" : "REG";
+                    ROB_Table.addEntry(type, inst.rd);
+                    int robIndex = (ROB_Table.tail - 1 + 8) % 8;
 
-                    // Allocate ROB
-                    inst.robIndex = ROB_Table.addEntry(inst.rd);
-                    int robIndex = inst.robIndex;
+                    inst.robIndex = robIndex;
                     inst.issued = true;
                     inst.issueCycle = cycle;
 
                     ReservationStation &rs = (*RS_list)[rsIndex];
                     rs.busy = true;
                     rs.op = opcode;
-                    rs.Dest = inst.robIndex;
+                    rs.Dest = robIndex;
+                    rs.lat = getLatency(opcode);
 
                     // READ OPERANDS
+                    // Initialize
+                    rs.Vj = 0;
+                    rs.Vk = 0;
+                    rs.Qj = 0;
+                    rs.Qk = 0;
 
                     // ---- Source 1: rs1 ----
-                    int tag1 = regStatus.getROB(inst.rs1); // new API
-                    if (tag1 != 0)
+                    if (opcode != 8) // CALL doesn't use rs1
                     {
-                        // Operand waiting in ROB
-                        rs.Qj = tag1;
-
-                        // if ROB already has value (completed)
-                        if (ROB_Table.entries[tag1].ready)
+                        int tag1 = regStatus.getTag(inst.rs1);
+                        if (tag1 != 0)
                         {
-                            rs.Vj = ROB_Table.entries[tag1].value;
+                            // Operand waiting in ROB
+                            rs.Qj = tag1;
+
+                            // if ROB already has value (completed)
+                            const ROBEntry *entries = ROB_Table.getEntries();
+                            if (entries[tag1].ready)
+                            {
+                                rs.Vj = entries[tag1].value;
+                                rs.Qj = 0;
+                            }
+                        }
+                        else
+                        {
+                            // Operand ready in register file
+                            rs.Vj = RegFile[inst.rs1];
                             rs.Qj = 0;
                         }
                     }
-                    else
-                    {
-                        // Operand ready in register file
-                        rs.Vj = RegFile[inst.rs1];
-                        rs.Qj = 0;
-                    }
 
                     // ---- Source 2: rs2 ---- (for R-type, BEQ, STORE)
-                    if (opcode != 1 && opcode != 8 && opcode != 9)
+                    if (opcode == 2) // STORE needs rs2 (value to store)
                     {
-                        int tag2 = regStatus.getROB(inst.rs2); // new API
+                        int tag2 = regStatus.getTag(inst.rs2);
                         if (tag2 != 0)
                         {
                             rs.Qk = tag2;
 
-                            if (ROB_Table.entries[tag2].ready)
+                            const ROBEntry *entries = ROB_Table.getEntries();
+                            if (entries[tag2].ready)
                             {
-                                rs.Vk = ROB_Table.entries[tag2].value;
+                                rs.Vk = entries[tag2].value;
+                                rs.Qk = 0;
+                            }
+                        }
+                        else
+                        {
+                            rs.Vk = RegFile[inst.rs2];
+                            rs.Qk = 0;
+                        }
+                    }
+                    else if (opcode == 3 || (opcode >= 4 && opcode <= 7)) // BEQ, arithmetic
+                    {
+                        int tag2 = regStatus.getTag(inst.rs2);
+                        if (tag2 != 0)
+                        {
+                            rs.Qj = tag2;
+
+                            const ROBEntry *entries = ROB_Table.getEntries();
+                            if (entries[tag2].ready)
+                            {
+                                rs.Vk = entries[tag2].value;
                                 rs.Qk = 0;
                             }
                         }
@@ -184,15 +220,26 @@ int main()
                         rs.A = inst.immediate;
                     }
 
-                    // Set register status for destinations
-                    if (opcode == 1 || opcode == 4 || opcode == 5 ||
-                        opcode == 6 || opcode == 7 || opcode == 8)
+                    // Set register status for destinations (register renaming)
+                    if (opcode != 2 && opcode != 3 && opcode != 9) // Not STORE, BEQ, RET
                     {
-                        regStatus.setROB(inst.rd, robIndex); // new API
+                        regStatus.setTag(inst.rd, robIndex);
                     }
 
-                    PC++; // move to next instruction
+                    cout << "  [ISSUE] Instr " << instrIndex
+                         << " (addr=" << inst.address << ", op=" << opcode
+                         << ") -> RS[" << rsIndex << "], ROB[" << robIndex << "]" << endl;
+
+                    instrIndex++; // Move to next instruction
                 }
+                else
+                {
+                    cout << "  [ISSUE] No free RS for opcode " << opcode << endl;
+                }
+            }
+            else
+            {
+                cout << "  [ISSUE] ROB is full" << endl;
             }
         }
 
@@ -267,20 +314,25 @@ void loadProgram(vector<Instructions> &program)
     ifstream infile(filename);
     if (!infile.is_open())
     {
-        cout << "Error opening file!\n";
+        cout << "Error opening file!" << endl;
         exit(1);
     }
 
     program.clear();
-    PC = 0;
+
+    // Read starting address
+    infile >> startingAddress;
+    PC = startingAddress;
+
+    cout << "Starting address: " << startingAddress << endl;
 
     int op, a, b, c;
+    int currentAddr = startingAddress;
 
     while (infile >> op >> a >> b >> c)
     {
         Instructions instr;
 
-        // Use constructor instead of manual assignment
         if (op == 1)
         {                                         // LOAD rd, offset(rs1)
             instr = Instructions(op, b, 0, a, c); // rs1=b, rd=a, immediate=c
@@ -293,15 +345,52 @@ void loadProgram(vector<Instructions> &program)
         {                                         // BEQ rs1, rs2, offset
             instr = Instructions(op, a, b, 0, c); // rs1=a, rs2=b, immediate=c
         }
-        else
-        {                                         // ADD, SUB, NAND, MUL
-            instr = Instructions(op, a, b, c, 0); // rs1=a, rs2=b, rd=c
+        else if (op == 8)
+        {                                         // CALL label
+            instr = Instructions(op, 0, 0, 1, a); // rd=1 (R1 stores return), immediate=a
         }
+        else if (op == 9)
+        {                                         // RET
+            instr = Instructions(op, 1, 0, 0, 0); // rs1=1 (return address in R1)
+        }
+        else
+        {                                         // ADD, SUB, NAND, MUL (rd, rs1, rs2)
+            instr = Instructions(op, b, c, a, 0); // rs1=b, rs2=c, rd=a
+        }
+
+        instr.address = currentAddr;
+        currentAddr++;
 
         program.push_back(instr);
     }
 
     infile.close();
+    cout << "Loaded " << program.size() << " instructions." << endl;
+}
+
+void loadMemoryData()
+{
+    cout << "Enter memory filename: ";
+    string fname;
+    cin >> fname;
+
+    ifstream memfile(fname);
+    if (!memfile.is_open())
+    {
+        cout << "Error loading memory file!" << endl;
+        exit(1);
+    }
+
+    memory.clear();
+    int address, value;
+
+    while (memfile >> address >> value)
+    {
+        memory[address] = value;
+    }
+
+    memfile.close();
+    cout << "Memory data loaded successfully." << endl;
 }
 
 int getLatency(int opcode)
