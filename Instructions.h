@@ -14,6 +14,7 @@ public:
     int rs2;       // Source register 2
     int rd;        // Destination register
     int immediate; // Immediate value
+    int address;
 
     int robIndex; // ROB entry assigned to this instruction
     bool issued;
