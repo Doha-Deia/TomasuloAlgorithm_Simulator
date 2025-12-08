@@ -127,7 +127,7 @@ int main()
                 { // RS AVAILABLE
                     // Allocate ROB entry
                     string type = (opcode == 2) ? "STORE" : "REG";
-                    ROB_Table.addEntry(type, inst.rd);
+                    ROB_Table.addEntry(inst.rd);
                     int robIndex = (ROB_Table.tail - 1 + 8) % 8;
 
                     inst.robIndex = robIndex;
@@ -150,7 +150,7 @@ int main()
                     // ---- Source 1: rs1 ----
                     if (opcode != 8) // CALL doesn't use rs1
                     {
-                        int tag1 = regStatus.getTag(inst.rs1);
+                        int tag1 = regStatus.getROB(inst.rs1);
                         if (tag1 != 0)
                         {
                             // Operand waiting in ROB
@@ -175,7 +175,7 @@ int main()
                     // ---- Source 2: rs2 ---- (for R-type, BEQ, STORE)
                     if (opcode == 2) // STORE needs rs2 (value to store)
                     {
-                        int tag2 = regStatus.getTag(inst.rs2);
+                        int tag2 = regStatus.getROB(inst.rs2);
                         if (tag2 != 0)
                         {
                             rs.Qk = tag2;
@@ -195,7 +195,7 @@ int main()
                     }
                     else if (opcode == 3 || (opcode >= 4 && opcode <= 7)) // BEQ, arithmetic
                     {
-                        int tag2 = regStatus.getTag(inst.rs2);
+                        int tag2 = regStatus.getROB(inst.rs2);
                         if (tag2 != 0)
                         {
                             rs.Qj = tag2;
@@ -223,7 +223,7 @@ int main()
                     // Set register status for destinations (register renaming)
                     if (opcode != 2 && opcode != 3 && opcode != 9) // Not STORE, BEQ, RET
                     {
-                        regStatus.setTag(inst.rd, robIndex);
+                        regStatus.setROB(inst.rd, robIndex);
                     }
 
                     cout << "  [ISSUE] Instr " << instrIndex
