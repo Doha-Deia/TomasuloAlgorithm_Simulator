@@ -85,6 +85,7 @@ int main()
     while (!done)
     {
         cout << "\n--- Cycle " << cycle << " ---" << endl;
+        ReservationStation rs;
 
         // ISSUE STAGE
 
@@ -129,7 +130,7 @@ int main()
                     inst.issued = true;
                     inst.issueCycle = cycle;
 
-                    ReservationStation &rs = (*RS_list)[rsIndex];
+                    rs = (*RS_list)[rsIndex];
                     rs.busy = true;
                     rs.op = opcode;
                     rs.Dest = inst.robIndex;
@@ -198,10 +199,168 @@ int main()
 
         // EXECUTE STAGE
 
+// Loop through every reservation station list
+    vector<vector<ReservationStation>*> allRS = {
+        &LoadRS, &StoreRS, &BEQRS, &CallRetRS,
+        &AddSubRS, &NandRS, &MulRS
+    };
+
+    for (auto RS_list : allRS)
+    {
+        for (auto &rs : *RS_list)
+        {
+            if (!rs.busy) 
+                continue;
+
+            int robIndex = rs.Dest;
+            if (robIndex < 0) 
+                continue;
+
+            Instructions &inst = program[robIndex];
+
+            // Check operands
+            if (rs.Qj == 0 && rs.Qk == 0)
+            {
+                // Start execution
+                if (inst.execStartCycle == 0)
+                {
+                    inst.execStartCycle = cycle;
+                    inst.execEndCycle = cycle + getLatency(rs.op);
+                }
+
+                // address calculation for load/store
+                if (rs.op == 1) // load
+                {
+                    // A = Vj + immediate 
+                    rs.A = rs.Vj + rs.A;
+                }
+
+                if (rs.op == 2) // store
+                {
+                    // Address = Vj + immediate 
+                    rs.A = rs.Vj + rs.A;
+                }
+            }
+        }
+    }
+
         // WRITE STAGE
+        for (auto RS_list : allRS) {
+        for (auto &rs : *RS_list)
+        {
+            if (!rs.busy) continue;
+
+            int b = rs.Dest;  // ROB entry = instruction index
+            Instructions &inst = program[b];
+
+            // Check if execution finished this cycle
+            if (inst.execEndCycle == cycle)
+            {
+                // store
+                if (rs.op == 2) 
+                {
+                    // wait until RS[r].Qk == 0
+                    if (rs.Qk == 0)
+                    {
+                        ROB_Table.entries[b].value = rs.Vk;
+                        ROB_Table.entries[b].ready = true;
+                        inst.writeCycle = cycle;
+
+                        rs.busy = false;
+                    }
+                    continue;
+                }
+
+                //other instructions
+                // result from functional unit
+                int result = ROB_Table.entries[b].value;
+
+                // Clear the RS entry
+                rs.busy = false;
+
+                for (auto RS2_list : allRS)
+                {
+                    for (auto &rs2 : *RS2_list)
+                    {
+                        if (!rs2.busy) continue;
+
+                        // For Qj
+                        if (rs2.Qj == b)
+                        {
+                            rs2.Vj = result;
+                            rs2.Qj = 0;
+                        }
+                        // For Qk
+                        if (rs2.Qk == b)
+                        {
+                            rs2.Vk = result;
+                            rs2.Qk = 0;
+                        }
+                    }
+                }
+
+                // Write result into ROB
+                ROB_Table.entries[b].value = result;
+                ROB_Table.entries[b].ready = true;
+
+                inst.writeCycle = cycle;
+            }
+        }
+    }
 
         // COMMIT STAGE
 
+        // if ROB empty: no commit
+        if (!ROB_Table.isEmpty())
+        {
+            int h = ROB_Table.head;
+            ROBEntry &entry = ROB_Table.entries[h];
+
+            if (entry.ready)
+            {
+                Instructions &inst = program[h];
+                int opcode = inst.opcode;
+                int rd = entry.dest;
+
+                // store
+                if (opcode == 2)
+                {
+                    inst.commitCycle = cycle;
+
+                    // Remove ROB entry
+                    ROB_Table.remove();
+                    instructionsCommitted++;
+                }
+                else if (rd != 0)
+                {
+                    // Write back to register file rd
+                    registers[rd] = entry.value;
+
+                    // Clear register status if this ROB produced the register
+                    if (regStatus.getROB(rd) == h)
+                        regStatus.setROB(rd, 0);
+
+                    inst.commitCycle = cycle;
+
+                    ROB_Table.remove();
+                    instructionsCommitted++;
+                }
+                //beq
+                else
+                {
+                    inst.commitCycle = cycle;
+
+                    ROB_Table.remove();
+                    instructionsCommitted++;
+                }
+            }
+        }
+
+
+
+
+
+        // End of STAGES
         totalCycles = cycle - 1;
 
         // Print results
