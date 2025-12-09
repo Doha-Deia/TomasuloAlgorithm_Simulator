@@ -1,0 +1,8 @@
+# sample program
+LOOP: LOAD R1, 0
+ADD R2, R1, R1
+SUB R3, R2, R1
+STORE R3, 10
+BEQ R3, R0, END
+MUL R4, R2, R2
+END: NAND R5, R4, R1

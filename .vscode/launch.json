@@ -6,12 +6,12 @@
       "type": "cppdbg",
       "request": "launch",
       "program": "${workspaceFolder}/simulator",
-      "args": [],
+      "args": ["program.txt", "memory.txt"],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}",
       "externalConsole": true,
       "MIMode": "gdb",
-      "miDebuggerPath": "C:/not windows/apps set up/mingw64/bin/g++.exe",
+      "miDebuggerPath": "C:/not windows/apps set up/mingw64/bin/gdb.exe",
       "preLaunchTask": "build"
     }
   ]
