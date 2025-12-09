@@ -65,13 +65,13 @@ Each program includes sample initial memory values when needed.
 2. Compile using your environment (example below may change based on your language):
 
    ```
-   g++ -std=c++17 -O2 simulator.cpp -o femTomas
+   g++ -std=c++17 -O2 main.cpp -o simulator.exe
    ```
 
 3. Run the simulator:
 
    ```
-   ./femTomas
+   ./simulator.exe
    ```
 
 4. Provide:
