@@ -1,8 +1,3 @@
-Here is a clean **README.txt** you can copy into your GitHub repository.
-If you'd like it in a different structure (Markdown, more sections, or customized to your team), just tell me!
-
----
-
 # README.txt
 
 **Project Name:** femTomas – Tomasulo Algorithm Simulator
@@ -11,15 +6,6 @@ If you'd like it in a different structure (Markdown, more sections, or customize
 
 ---
 
-## 🧑‍🤝‍🧑 Team Members
-
-* **Student 1 Name – ID**
-* **Student 2 Name – ID**
-* **Student 3 Name – ID**
-
-*(Replace with your actual group details.)*
-
----
 
 ## 📘 Project Overview
 
