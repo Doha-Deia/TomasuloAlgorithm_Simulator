@@ -1,11 +1,8 @@
-//
-// Created by ASUS Zenbook on 12/3/2025.
-//
-
 #include "ReservationStation.h"
 
 // Default constructor
-ReservationStation::ReservationStation() {
+ReservationStation::ReservationStation()
+{
     busy = false;
     op = 0;
     lat = 0;
@@ -15,11 +12,22 @@ ReservationStation::ReservationStation() {
     Qk = 0;
     Vj = 0;
     Vk = 0;
-    A=0;
-    Dest=0;
+    A = 0;
+    Dest = 0;
+
+    // execute-stage fields
+    instrIndex = -1;
+    remainingLat = 0;
+    executing = false;
+    addrCalcDone = false;
+    done = false;
 }
 
-void ReservationStation::setValues(int OP, int Vj_val, int Vk_val, int Qj_tag, int Qk_tag, int address, int destROB) {
+// Initialize RS fields when issuing an instruction
+void ReservationStation::setValues(int OP, int Vj_val, int Vk_val,
+                                   int Qj_tag, int Qk_tag,
+                                   int address, int destROB, int instrIdx)
+{
     busy = true;
     op = OP;
     Vj = Vj_val;
@@ -30,11 +38,19 @@ void ReservationStation::setValues(int OP, int Vj_val, int Vk_val, int Qj_tag, i
     Dest = destROB;
     result = 0;
     resultReady = false;
-    lat = 0;   // should be updated
+    lat = 0; // will be set by caller using getLatency(op)
+
+    // execute-stage init
+    instrIndex = instrIdx;
+    remainingLat = 0;
+    executing = false;
+    addrCalcDone = false;
+    done = false;
 }
 
-// Reset RS for next instruction in wrtting stage
-void ReservationStation::clear() {
+// Reset RS for next instruction in writing/commit stage
+void ReservationStation::clear()
+{
     busy = false;
     op = 0;
     lat = 0;
@@ -44,6 +60,12 @@ void ReservationStation::clear() {
     Qk = 0;
     Vj = 0;
     Vk = 0;
-    A=0;
-    Dest =0;
+    A = 0;
+    Dest = 0;
+
+    instrIndex = -1;
+    remainingLat = 0;
+    executing = false;
+    addrCalcDone = false;
+    done = false;
 }
