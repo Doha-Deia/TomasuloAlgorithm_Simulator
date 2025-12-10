@@ -32,22 +32,6 @@ const unordered_map<int, OpInfo> OPCODES = {
     {8, {"CALL", 1, 1}},
     {9, {"RET", 1, 1}} };
 
-// Reservation station counts per op family
-struct RSConfig
-{
-    string name;
-    int count;
-    int latency;
-};
-const vector<pair<string, int>> RS_COUNTS = {
-    {"LOAD", 2},
-    {"STORE", 1},
-    {"BR", 2},  // BEQ
-    {"ADD", 4}, // ADD/SUB/NAND map here (NAND latency 1 but share or separate? we'll use separate family by op name below)
-    {"MUL", 1},
-    {"CALL", 1},
-    {"RET", 1} };
-
 // mapping opcode to RS family name
 string opcodeRSFamily(int opcode)
 {
@@ -67,8 +51,10 @@ string opcodeRSFamily(int opcode)
         return "NAND";
     if (op == "MUL")
         return "MUL";
-    if (op == "CALL" || op == "RET")
+    if (op == "CALL")
         return "CALL";
+    if (op == "RET")
+        return "RET";
     return "OTHER";
 }
 
@@ -130,7 +116,7 @@ vector<int> reg_tag(NUM_REG, -1); // reg_stat    // map reg -> producing ROB ind
 vector<int> memory_mem(MEM_SIZE, 0);
 
 vector<pair<string, vector<RS>>> RS_sets; // pair of family name and list of RS entries
-vector<string> RS_names_order;            //**** */           // to find RS set by name
+vector<string> RS_names_order;            // to find RS set by name
 
 vector<ROBEntry> ROB(ROB_SIZE);
 int rob_head = 0, rob_tail = 0, rob_count = 0;
@@ -147,7 +133,7 @@ int branch_count = 0;
 int mispredictions = 0;
 
 // ---------------- Helpers ----------------
-int wrap16(int x) { return (x & 0xFFFF); } ////******* */
+int wrap16(int x) { return (x & 0xFFFF); }
 
 int allocROB()
 {
@@ -162,6 +148,7 @@ int allocROB()
     ROB[idx].dest = -1;
     ROB[idx].pc_on_issue = -1;
     ROB[idx].br_target = -1;
+    ROB[idx].commit_remaining = 0;
     rob_tail = (rob_tail + 1) % ROB_SIZE;
     ++rob_count;
     return idx;
@@ -170,7 +157,7 @@ int allocROB()
 void freeROB(int idx)
 {
     ROB[idx].clear();
-    // If freeing head/tail won't be updated here - commit handles head
+    // commit handles head movement
 }
 
 // find RS set and an available RS for opcode
@@ -192,12 +179,11 @@ bool find_free_rs_for_opcode(int opcode, int& rs_set_idx, int& rs_idx)
             }
         }
     }
-    // if not found by family, try exact op name RS set (some ops grouped)
     return false;
 }
 
 int find_rs_set_index_by_name(const string& name)
-{ ///////////// *******
+{
     for (size_t i = 0; i < RS_sets.size(); ++i)
         if (RS_sets[i].first == name)
             return (int)i;
@@ -214,80 +200,28 @@ void clear_all_rs_and_rob_younger_than_instr(int instr_pc) {
             }
         }
     }
-    // free ROB entries whose instruction pc > instr_pc (conservative: clear all)
+    // free ROB entries whose instruction pc > instr_pc
     for (int i = 0; i < ROB_SIZE; ++i) {
         if (ROB[i].busy && ROB[i].instr_id != -1) {
             int pid = ROB[i].instr_id;
             if (program[pid].addr > instr_pc) {
-                // untag destination register if it pointed to this ROB entry
                 if (ROB[i].type == "REG" && ROB[i].dest >= 0 && ROB[i].dest < NUM_REG) {
                     if (reg_tag[ROB[i].dest] == i) reg_tag[ROB[i].dest] = -1;
+                }
+                if (ROB[i].type == "CALL") {
+                    // CALL wrote return to R1 logically - clear tag if any
+                    if (reg_tag[1] == i) reg_tag[1] = -1;
                 }
                 ROB[i].clear();
             }
         }
     }
-    // rebuild fetch queue starting at the next sequential PC after instr_pc (if predicted not taken) or branch target if taken
+    // rebuild fetch queue starting at PC
     fetch_queue.clear();
-    // We'll repopulate fetch queue from program entries with addr >= PC (PC will be set by caller)
     for (size_t i = 0; i < program.size(); ++i) {
         if (program[i].addr >= PC) fetch_queue.push_back((int)i);
     }
 }
-//
-// void flush_after_mispredict(int branch_rob_idx)
-// {
-//     // 1. Clear RS entries that depend on ROB entries younger than the branch
-//     for (auto &set : RS_sets)
-//     {
-//         for (auto &rs : set.second)
-//         {
-//             if (rs.busy && rs.rob_dest != -1)
-//             {
-//                 // if RS belongs to instruction after the branch ==> clear it
-//                 int r = rs.rob_dest;
-//                 if (r != branch_rob_idx &&
-//                     ((branch_rob_idx < rob_tail && r > branch_rob_idx && r < rob_tail) ||
-//                      (branch_rob_idx > rob_tail && (r > branch_rob_idx || r < rob_tail))))
-//                 {
-//                     rs.clear();
-//                 }
-//             }
-//         }
-//     }
-//
-//     // 2. Clear ROB entries after the branch
-//     int i = (branch_rob_idx + 1) % ROB_SIZE;
-//     while (i != rob_tail)
-//     {
-//         // untag registers
-//         if (ROB[i].busy && ROB[i].type == "REG")
-//         {
-//             int reg = ROB[i].dest;
-//             if (reg_tag[reg] == i)
-//                 reg_tag[reg] = -1;
-//         }
-//         ROB[i].clear();
-//         i = (i + 1) % ROB_SIZE;
-//     }
-//
-//     // 3. Reset ROB tail to right after branch
-//     rob_tail = (branch_rob_idx + 1) % ROB_SIZE;
-//
-//     // 4. Recompute ROB count
-//     if (rob_tail >= rob_head)
-//         rob_count = rob_tail - rob_head;
-//     else
-//         rob_count = rob_tail + ROB_SIZE - rob_head;
-//
-//     // 5. Rebuild fetch_queue starting from new PC (already set by caller)
-//     fetch_queue.clear();
-//     for (int p = 0; p < (int)program.size(); ++p)
-//     {
-//         if (program[p].addr >= PC)
-//             fetch_queue.push_back(p);
-//     }
-// }
 
 // ---------------- Parsing ----------------
 bool load_program_file(const string& fname)
@@ -395,8 +329,8 @@ void init_structures()
 
     // build RS sets: we'll create families used by opcodeRSFamily
     RS_sets.clear();
+    RS_names_order.clear();
     // create entries for families with counts
-    // We'll use a small mapping to set counts
     unordered_map<string, int> mapCounts;
     mapCounts["LOAD"] = 2;
     mapCounts["STORE"] = 1;
@@ -404,7 +338,8 @@ void init_structures()
     mapCounts["ADD"] = 4; // covers ADD/SUB
     mapCounts["NAND"] = 2;
     mapCounts["MUL"] = 1;
-    mapCounts["CALL"] = 1; // ret,call
+    mapCounts["CALL"] = 1;
+    mapCounts["RET"] = 1;
 
     for (auto& kv : mapCounts)
     {
@@ -563,12 +498,26 @@ void do_issue()
     {
         // 8 0 0 imm => CALL imm
         ROB[rob_idx].type = "CALL";
+        ROB[rob_idx].dest = 1;                 // R1 holds return address (logical)
         ROB[rob_idx].br_target = ins.rs2_imm;  // imm (absolute target)
+        // mark R1 as pending (so subsequent reads wait)
+        if (reg_tag[1] != -1) {
+            // if something else already queues R1, that's okay — keep new tag
+        }
+        reg_tag[1] = rob_idx;
     }
+
     else if (opname == "RET")
     {
         // 9 0 0 0 => RET
         ROB[rob_idx].type = "RET";
+        // RET depends on R1 (return address). If R1 is pending, tag it.
+        if (reg_tag[1] != -1) {
+            rs.Qj = reg_tag[1];
+        } else {
+            rs.Vj = regs[1];
+            rs.Qj = -1;
+        }
     }
     else
     {
@@ -589,7 +538,7 @@ void do_issue()
     }
 
     // if ROB writes to register, set reg_tag
-    if (ROB[rob_idx].type == "REG" && ROB[rob_idx].dest >= 0 && ROB[rob_idx].dest < NUM_REG)
+    if ((ROB[rob_idx].type == "REG" || ROB[rob_idx].type == "CALL") && ROB[rob_idx].dest >= 0 && ROB[rob_idx].dest < NUM_REG)
     {
         if (ROB[rob_idx].dest != 0)
             reg_tag[ROB[rob_idx].dest] = rob_idx;
@@ -602,12 +551,8 @@ void do_issue()
     // advance fetch queue and PC (speculative fetch)
     fetch_queue.pop_front();
     PC = PC + 1; // sequential next instruction address by default
-    // repopulate fetch_queue as needed (we already had entries for addresses >= start)
-    // (fetch queue is adjusted by branch recovery)
 }
 
-
-// Execute stage: decrement exec_remaining for started RS entries if operands ready
 // Execute stage: decrement exec_remaining for started RS entries if operands ready
 void do_execute()
 {
@@ -635,6 +580,7 @@ void do_execute()
             if (!rs.exec_started)
             {
                 bool ready = (rs.Qj == -1 && rs.Qk == -1);
+                // For STORE only base needed to start, handled later
                 if (ready)
                 {
                     rs.exec_started = true;
@@ -645,8 +591,6 @@ void do_execute()
                     if (rs.exec_remaining == 0)
                     {
                         ins.exec_end = cycle_num;
-                        // FIX: For STORE, set write_remaining to 0 to allow immediate write-back (2-cycle address execution).
-                        // For other ops, keep 1-cycle delay.
                         string opname = OPCODES.at(ins.opcode).name;
                         rs.write_remaining = (opname == "STORE") ? 0 : 1;
                     }
@@ -660,7 +604,6 @@ void do_execute()
                     if (rs.exec_remaining == 0)
                     {
                         ins.exec_end = cycle_num;
-                        // FIX: Same as above.
                         string opname = OPCODES.at(ins.opcode).name;
                         rs.write_remaining = (opname == "STORE") ? 0 : 1;
                     }
@@ -675,8 +618,7 @@ void do_execute()
         for (auto& rs : set.second)
         {
             if (!rs.busy || rs.exec_started) continue;
-            string opname = OPCODES.at(rs.opcode).name;
-            if (opname == "STORE")
+            if (rs.opcode == 2) // STORE
             {
                 bool ready = (rs.Qj == -1);  // Only base needs to be ready to start
                 if (ready)
@@ -685,8 +627,7 @@ void do_execute()
                     Instr& ins = program[rs.instr_id];
                     if (ins.exec_start == -1)
                         ins.exec_start = cycle_num;
-                    // Do NOT set exec_remaining to 0; let it decrement over the full latency (2 cycles)
-                    // rs.exec_remaining is already set to 2 in do_issue()
+                    // exec_remaining already set at issue to STORE latency
                 }
             }
         }
@@ -694,7 +635,6 @@ void do_execute()
 }
 
 // Write-back stage: pick at most one finished RS to write to ROB/CDB
-// Write-back stage: write to ROB 1 cycle after execution completes
 void do_write()
 {
     // reset cdb flag for this cycle
@@ -728,15 +668,17 @@ void do_write()
 
     RS& rs = RS_sets[chosen_set].second[chosen_idx];
     Instr& ins = program[rs.instr_id];
+    string opname = OPCODES.at(ins.opcode).name;
 
-    // countdown write latency (1 cycle after exec)
-    if (rs.write_remaining > 0)
-    {
-        rs.write_remaining--;
-        return;
+    // countdown write latency, but RET has no extra delay
+    if (opname != "RET") {
+        if (rs.write_remaining > 0)
+        {
+            rs.write_remaining--;
+            return;
+        }
     }
 
-    string opname = OPCODES.at(ins.opcode).name;
     ROB[rs.rob_dest].commit_remaining = OPCODES.at(ins.opcode).commit_latency;
 
     // write to ROB
@@ -746,7 +688,7 @@ void do_write()
         int val = (addr >= 0 && addr < MEM_SIZE) ? memory_mem[addr] : 0;
         ROB[rs.rob_dest].value = val;
         ROB[rs.rob_dest].ready = true;
-
+        ROB[rs.rob_dest].dest = ins.rd;
     }
     else if (opname == "STORE")
     {
@@ -769,11 +711,12 @@ void do_write()
     }
     else if (opname == "CALL")
     {
+        // No value result; just mark ready so commit can perform jump + save RA
         ROB[rs.rob_dest].ready = true;
-        ROB[rs.rob_dest].br_target = ins.rs2_imm;
     }
     else if (opname == "RET")
     {
+        // Just mark ready; commit will read R1 and jump
         ROB[rs.rob_dest].ready = true;
     }
     else
@@ -800,7 +743,9 @@ void do_write()
     // clear RS
     rs.clear();
 }
-// Commit stage: commit at most one ROB entry (in-order)
+
+
+// do commit stage: commit instructions in-order from ROB head
 void do_commit() {
     if (rob_count == 0)
         return;
@@ -811,211 +756,81 @@ void do_commit() {
     if (!e.busy || !e.ready)
         return;
 
-
-    if (e.commit_remaining > 0)
-    {
-        e.commit_remaining--; // wait in ROB
-        return;               // do NOT commit yet
+    if (e.commit_remaining > 0) {
+        e.commit_remaining--;
+        return;  // Wait for commit latency
     }
-    // ----------------------------------------
 
-    // Perform actual commit now
+    // Mark instruction as committed
     int iid = e.instr_id;
-    if (iid >= 0 && iid < (int)program.size())
-    {
+    if (iid >= 0 && iid < (int)program.size()) {
         program[iid].commit = cycle_num;
     }
 
-    if (e.type == "REG")
-    {
-        // Write register result
+    if (e.type == "REG") {
         int rd = e.dest;
-        if (rd > 0 && rd < NUM_REG)
-        {
+        if (rd > 0 && rd < NUM_REG) {  // R0 is read-only
             regs[rd] = wrap16(e.value);
             if (reg_tag[rd] == rob_head)
                 reg_tag[rd] = -1;
         }
     }
-    else if (e.type == "STORE")
-    {
-        // After commit latency expires, write to memory
+    else if (e.type == "STORE") {
         int addr = e.dest;
-        if (addr >= 0 && addr < MEM_SIZE)
-        {
+        if (addr >= 0 && addr < MEM_SIZE) {
             memory_mem[addr] = wrap16(e.value);
         }
     }
-    else if (e.type == "BR")
-    {
+    else if (e.type == "BR") {
         bool taken = (e.value != 0);
         int target = e.br_target;
         int pc_issue = e.pc_on_issue;
 
-        if (taken)
-        {
+        if (taken) {
             mispredictions++;
-
-            // Redirect PC to the correct target
             PC = target;
-
-            // ===== FLUSH all SPECULATIVE younger instructions =====
-
-            // Remove younger instruction timings
-            for (auto& ins : program)
-            {
-                if (ins.addr > pc_issue)   // younger instructions ONLY
-                {
-                    ins.issue = -1;
-                    ins.exec_start = -1;
-                    ins.exec_end = -1;
-                    ins.write = -1;
-                    ins.commit = -1;
-                    ins.rob_idx = -1;
-                }
-            }
-
-            // Clear register tags
-            for (int r = 0; r < NUM_REG; r++)
-                reg_tag[r] = -1;
-
-            // Clear RS entries
-            for (auto& set : RS_sets)
-                for (auto& rs : set.second)
-                    rs.clear();
-
-            // Clear ROB entirely (branch is already committing)
-            for (int i = 0; i < ROB_SIZE; i++)
-                ROB[i].clear();
-
-            rob_head = rob_tail = rob_count = 0;
-
-            // Rebuild fetch queue starting from correct target
-            fetch_queue.clear();
-            for (size_t i = 0; i < program.size(); i++)
-                if (program[i].addr >= PC)
-                    fetch_queue.push_back(i);
-
-            // Branch is now committed, so return
-            return;
+            clear_all_rs_and_rob_younger_than_instr(pc_issue);
         }
-
-        // NOT taken → do nothing (PC already incremented during issue)
+        // if not taken, PC already incremented at issue
     }
-
-    else if (e.type == "CALL")
-    {
-        // Save return address to R1 (PC+1 of CALL instruction)
+    else if (e.type == "CALL") {
+        // Save return address (next sequential PC) in R1
         int return_addr = e.pc_on_issue + 1;
         regs[1] = wrap16(return_addr);
+        if (reg_tag[1] == rob_head) reg_tag[1] = -1;
 
-        // Jump to target address (absolute address from imm)
-        PC = e.br_target;  // e.br_target contains the absolute target address
+        // Jump to call target
+        PC = e.br_target;
 
-        // Clear timing information for all instructions that will be reissued
-        for (auto& ins : program)
-        {
-            if (ins.addr >= PC)  // Instructions that will be reissued after CALL
-            {
-                ins.issue = -1;
-                ins.exec_start = -1;
-                ins.exec_end = -1;
-                ins.write = -1;
-                ins.commit = -1;
-                ins.rob_idx = -1;
-            }
-        }
-
-        // Clear register status tags for all registers
-        for (int i = 0; i < NUM_REG; i++)
-        {
-            reg_tag[i] = -1;
-        }
-
-        // Clear all RS entries
-        for (auto& set : RS_sets)
-        {
-            for (auto& rs : set.second)
-            {
-                rs.clear();
-            }
-        }
-
-        // Clear all ROB entries
-        for (int i = 0; i < ROB_SIZE; i++)
-        {
-            ROB[i].clear();
-        }
-        rob_head = 0;
-        rob_tail = 0;
-        rob_count = 0;
-
-        // Rebuild fetch queue starting from target address
-        fetch_queue.clear();
-        for (size_t i = 0; i < program.size(); i++)
-        {
-            if (program[i].addr >= PC)
-                fetch_queue.push_back((int)i);
-        }
-
-        // For CALL, we need to also clear the current ROB entry (the CALL itself)
-        // Since we're clearing all ROB entries above, we don't need to move head
-        // Just return without the normal cleanup
-        return;
+        // Flush younger speculative instructions
+        clear_all_rs_and_rob_younger_than_instr(e.pc_on_issue);
     }
-    else if (e.type == "RET")
-    {
-        // Step 1: Determine target PC (value in R1)
-        int target = regs[1];          // return address
-        int ret_idx = e.instr_id;      // index of this RET in the program
-
-        // Step 2: FLUSH all younger instructions (PC > RET)
-        for (auto& ins : program)
-        {
-            if (ins.addr > program[ret_idx].addr)
-            {
-                ins.issue = -1;
-                ins.exec_start = -1;
-                ins.exec_end = -1;
-                ins.write = -1;
-                ins.commit = -1;
-                ins.rob_idx = -1;
-            }
-        }
-
-        // Step 3: Clear all register tags
-        for (int r = 0; r < NUM_REG; r++)
-            reg_tag[r] = -1;
-
-        // Step 4: Clear all reservation stations
-        for (auto& set : RS_sets)
-            for (auto& rs : set.second)
-                rs.clear();
-
-        // Step 5: Clear all ROB entries
-        for (int i = 0; i < ROB_SIZE; i++)
-            ROB[i].clear();
-        rob_head = rob_tail = rob_count = 0;
-
-        // Step 6: Set PC to return address
+    else if (e.type == "RET") {
+        // Jump to address in R1
+        int target = regs[1];
         PC = target;
 
-        // Step 7: Rebuild fetch queue starting from PC
-        fetch_queue.clear();
-        for (auto& ins : program)
-            if (ins.addr >= PC)
-                fetch_queue.push_back(ins.id);
-
-        return;
+        clear_all_rs_and_rob_younger_than_instr(e.pc_on_issue);
     }
 
+    // Free this ROB entry and advance head
+    e.clear();
+    rob_head = (rob_head + 1) % ROB_SIZE;
+    rob_count--;
+
+    // Optionally try to commit next instruction in the same cycle
+    if (rob_count > 0) {
+        do_commit();
+    }
 }
+
 // utility: check if all instructions committed
 bool all_committed()
 {
-
-    return program.back().commit != -1;
-
+    for (auto &ins : program)
+        if (ins.commit == -1)
+            return false;
+    return true;
 }
 
 // single cycle step
@@ -1033,7 +848,7 @@ bool step()
     do_write();
     do_commit();
     // ISSUE stage: single-issue
-    for (int i = 0; i < ISSUE_WIDTH; ++i) ///////********** */
+    for (int i = 0; i < ISSUE_WIDTH; ++i)
         do_issue();
 
     return true;
@@ -1088,8 +903,8 @@ int main()
     cin.tie(nullptr);
 
     // -------------------- Hardcoded file paths --------------------
-    string progfile = "C:/Users/ASUS Zenbook/CLionProjects/untitled4/t.txt";
-    string memfile = "C:/Users/ASUS Zenbook/CLionProjects/untitled4/m.txt";
+    string progfile = "D:/Courses AUC/Fall 25/Comp. Architecture/Project 2/TomasuloAlgorithm_Simulator/test1.txt";
+    string memfile = "D:/Courses AUC/Fall 25/Comp. Architecture/Project 2/TomasuloAlgorithm_Simulator/test1_mem.txt";
 
     // -------------------- Load program --------------------
     if (!load_program_file(progfile))
