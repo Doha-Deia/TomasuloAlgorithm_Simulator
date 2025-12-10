@@ -61,7 +61,13 @@ The simulator successfully implements the following behaviors correctly:
 
 **Performance metrics:** Instruction-level cycle counts (issue/execute/write/commit) are accurately tracked.
                         IPC, total cycles, branch counts, and mispredictions are calculated and displayed.
---- 
+
+---
+## ⚠️ Known Limitations
+* Speculative execution relies solely on **always-not-taken prediction**. More advanced prediction is not implemented.
+* Multi-issue per cycle is not fully tested.
+* Handled to specific memory and immediate bit size
+---
 
 ## 🧪 Test Programs
 

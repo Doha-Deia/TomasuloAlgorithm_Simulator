@@ -136,7 +136,6 @@ int cdb_used = 0;
 int total_instructions = 0;
 int branch_count = 0;
 int mispredictions = 0;
-int committed_stores = 0;
 
 // ---------------- Helpers ----------------
 int wrap16(int x) { return (x & 0xFFFF); }
@@ -408,7 +407,6 @@ void init_structures()
 
     committed_log.clear();
     exec_sequence = 0;
-    committed_stores = 0;
 }
 
 // ---------------- Pipeline stages ----------------
@@ -857,7 +855,6 @@ void do_commit() {
         if (addr >= 0 && addr < MEM_SIZE) {
             memory_mem[addr] = wrap16(e.value);
         }
-        committed_stores++;
     }
     else if (e.type == "BR") {
         bool taken = (e.value != 0);
@@ -1027,7 +1024,6 @@ void print_report()
     cout << fixed << setprecision(3) << "IPC: " << ipc << "\n";
     cout << "Instructions (executions): " << committed << "\n";
     cout << "Branches: " << branch_count << "  Mispredictions: " << mispredictions << "\n\n";
-    cout << "Committed stores: " << committed_stores << "\n\n";
 
     cout << left << setw(5) << "ID" << setw(8) << "ADDR" << setw(8) << "OP" << setw(22) << "TEXT"
         << setw(8) << "Issue" << setw(10) << "ExecS" << setw(10) << "ExecE" << setw(8) << "Write" << setw(8) << "Commit" << "\n";
@@ -1056,20 +1052,6 @@ void print_report()
     }
     if (printed == 0)
         cout << "(none)\n";
-
-    cout << "\nMemory nonzero values (first 32 entries anywhere in memory):\n";
-    int found = 0;
-    for (int i = 0; i < MEM_SIZE && found < 32; ++i)
-    {
-        if (memory_mem[i] != 0)
-        {
-            cout << "[" << i << "]=" << memory_mem[i] << "  ";
-            if (++found % 8 == 0)
-                cout << "\n";
-        }
-    }
-    if (found == 0)
-        cout << "(none)\n";
 }
 
 int main()
@@ -1079,7 +1061,7 @@ int main()
 
     // -------------------- Hardcoded file paths --------------------
     string progfile = "C:/AUC/Fall 25/Arch/test1.txt";
-    //string memfile = "D:/Courses AUC/Fall 25/Comp. Architecture/Project 2/TomasuloAlgorithm_Simulator/test1_mem.txt";
+    string memfile = "C:/AUC/Fall 25/Arch/test1_mem.txt";
 
     // -------------------- Load program --------------------
     if (!load_program_file(progfile))
@@ -1088,12 +1070,12 @@ int main()
         return 1;
     }
 
-    /* -------------------- Load memory (optional) --------------------
+     //-------------------- Load memory (optional) --------------------
     if (!load_memory_file(memfile))
     {
         cerr << "Warning: Could not open memory file: " << memfile << "\n";
-        // continue; memory stays zero
-    }*/
+        //continue; memory stays zero
+    }
 
     // -------------------- Initialize structures --------------------
     init_structures();
