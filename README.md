@@ -38,6 +38,30 @@ The simulator supports:
   * Branch misprediction rate
 
 ---
+## ✅ Functionality Status
+The simulator successfully implements the following behaviors correctly:
+
+**CALL and RET instructions:** Supports function calls and returns using R1 as return address.
+                              Correctly handles speculative execution and flushes younger instructions on mispredicted branches.
+
+**Arithmetic instructions:** ADD, SUB, MUL, NAND are executed with proper latencies.
+                           Out-of-order execution and result forwarding via the CDB works as expected.
+
+**Load/Store instructions:** LOAD instructions read from memory and update registers correctly.
+                           STORE instructions write to memory only upon commit, respecting in-order semantics.
+
+**Branching (BEQ):** Branches are speculatively executed using an always-not-taken predictor.
+                  Mispredictions correctly flush younger instructions and update PC.
+
+**Reservation Stations and ROB:** Reservation stations per functional unit family are allocated and freed properly.
+                                 ROB tracks instructions for correct in-order commit and register mapping.
+
+**Pipeline stages:** Issue → Execute → Write → Commit works with proper handling of instruction dependencies.
+                     Single-issue per cycle is respected, but can be modified via configuration.
+
+**Performance metrics:** Instruction-level cycle counts (issue/execute/write/commit) are accurately tracked.
+                        IPC, total cycles, branch counts, and mispredictions are calculated and displayed.
+--- 
 
 ## 🧪 Test Programs
 
@@ -63,13 +87,13 @@ Each program includes sample initial memory values when needed.
 2. Compile using your environment (example below may change based on your language):
 
    ```
-   g++ -std=c++17 -O2 main.cpp -o simulator.exe
+   main.cpp -o mysimulator.exe
    ```
 
 3. Run the simulator:
 
    ```
-   ./simulator.exe
+   mysimulator.exe
    ```
 
 4. Provide:

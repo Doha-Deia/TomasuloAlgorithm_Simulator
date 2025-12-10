@@ -13,6 +13,7 @@ const int MEM_SIZE = 64000; // word-addressable
 const int ROB_SIZE = 8;     // changeable ROB size
 const int ISSUE_WIDTH = 1;  // single-issue
 const int DEFAULT_MAX_CYCLES = 1000000;
+const int MAX_EXECUTIONS = 50; // cap total committed executions
 
 // Operation latencies (cycles)
 struct OpInfo
@@ -118,6 +119,10 @@ vector<int> memory_mem(MEM_SIZE, 0);
 vector<pair<string, vector<RS>>> RS_sets; // pair of family name and list of RS entries
 vector<string> RS_names_order;            // to find RS set by name
 
+// Execution history to report multiple executions of the same PC
+vector<Instr> committed_log;
+int exec_sequence = 0;
+
 vector<ROBEntry> ROB(ROB_SIZE);
 int rob_head = 0, rob_tail = 0, rob_count = 0;
 
@@ -131,6 +136,7 @@ int cdb_used = 0;
 int total_instructions = 0;
 int branch_count = 0;
 int mispredictions = 0;
+int committed_stores = 0;
 
 // ---------------- Helpers ----------------
 int wrap16(int x) { return (x & 0xFFFF); }
@@ -196,26 +202,59 @@ void clear_all_rs_and_rob_younger_than_instr(int instr_pc) {
         for (auto& rs : p.second) {
             if (rs.busy && rs.instr_id != -1) {
                 int pid = rs.instr_id;
-                if (program[pid].addr > instr_pc) rs.clear();
+                if (program[pid].addr > instr_pc) {
+                    // Reset instruction timing fields
+                    program[pid].issue = -1;
+                    program[pid].exec_start = -1;
+                    program[pid].exec_end = -1;
+                    program[pid].write = -1;
+                    program[pid].commit = -1;
+                    program[pid].rob_idx = -1;
+                    rs.clear();
+                }
             }
         }
     }
+    
     // free ROB entries whose instruction pc > instr_pc
-    for (int i = 0; i < ROB_SIZE; ++i) {
-        if (ROB[i].busy && ROB[i].instr_id != -1) {
-            int pid = ROB[i].instr_id;
+    // We need to walk from head to tail and clear younger entries
+    int cleared_count = 0;
+    int new_tail = rob_head;
+    
+    for (int count = 0; count < rob_count; ++count) {
+        int idx = (rob_head + count) % ROB_SIZE;
+        
+        if (ROB[idx].busy && ROB[idx].instr_id != -1) {
+            int pid = ROB[idx].instr_id;
             if (program[pid].addr > instr_pc) {
-                if (ROB[i].type == "REG" && ROB[i].dest >= 0 && ROB[i].dest < NUM_REG) {
-                    if (reg_tag[ROB[i].dest] == i) reg_tag[ROB[i].dest] = -1;
+                // This entry should be flushed
+                // Reset instruction timing fields
+                program[pid].issue = -1;
+                program[pid].exec_start = -1;
+                program[pid].exec_end = -1;
+                program[pid].write = -1;
+                program[pid].commit = -1;
+                program[pid].rob_idx = -1;
+                
+                if (ROB[idx].type == "REG" && ROB[idx].dest >= 0 && ROB[idx].dest < NUM_REG) {
+                    if (reg_tag[ROB[idx].dest] == idx) reg_tag[ROB[idx].dest] = -1;
                 }
-                if (ROB[i].type == "CALL") {
-                    // CALL wrote return to R1 logically - clear tag if any
-                    if (reg_tag[1] == i) reg_tag[1] = -1;
+                if (ROB[idx].type == "CALL") {
+                    if (reg_tag[1] == idx) reg_tag[1] = -1;
                 }
-                ROB[i].clear();
+                ROB[idx].clear();
+                cleared_count++;
+            } else {
+                // This entry is older or equal, keep it
+                new_tail = (idx + 1) % ROB_SIZE;
             }
         }
     }
+    
+    // Update ROB tail and count
+    rob_tail = new_tail;
+    rob_count -= cleared_count;
+    
     // rebuild fetch queue starting at PC
     fetch_queue.clear();
     for (size_t i = 0; i < program.size(); ++i) {
@@ -366,6 +405,10 @@ void init_structures()
     cdb_used = 0;
     branch_count = 0;
     mispredictions = 0;
+
+    committed_log.clear();
+    exec_sequence = 0;
+    committed_stores = 0;
 }
 
 // ---------------- Pipeline stages ----------------
@@ -379,13 +422,26 @@ void do_issue()
     Instr& ins = program[prog_idx];
     if (ins.addr != PC)
         return; // must issue in-order by PC
+    
+    // If this instruction executed before, reset its timing for a fresh run
+    if (ins.issue != -1 || ins.exec_start != -1 || ins.exec_end != -1 || ins.write != -1 || ins.commit != -1)
+    {
+        ins.issue = -1;
+        ins.exec_start = -1;
+        ins.exec_end = -1;
+        ins.write = -1;
+        ins.commit = -1;
+        ins.rob_idx = -1;
+    }
+    Instr& current_ins = ins;
+    
     // check ROB free slot
     int rob_idx = allocROB();
     if (rob_idx == -1)
         return; // stall due ROB full
     // find RS free
     int rs_set_idx = -1, rs_idx = -1;
-    if (!find_free_rs_for_opcode(ins.opcode, rs_set_idx, rs_idx))
+    if (!find_free_rs_for_opcode(current_ins.opcode, rs_set_idx, rs_idx))
     {
         // no RS available -> rollback ROB alloc and stall
         rob_tail = (rob_tail - 1 + ROB_SIZE) % ROB_SIZE;
@@ -394,10 +450,10 @@ void do_issue()
     }
     RS& rs = RS_sets[rs_set_idx].second[rs_idx];
     rs.busy = true;
-    rs.opcode = ins.opcode;
-    rs.instr_id = ins.id;
+    rs.opcode = current_ins.opcode;
+    rs.instr_id = current_ins.id;
     rs.exec_started = false;
-    rs.exec_remaining = OPCODES.at(ins.opcode).exec_latency;
+    rs.exec_remaining = OPCODES.at(current_ins.opcode).exec_latency;
     rs.Qj = rs.Qk = -1;
     rs.Vj = rs.Vk = 0;
     rs.A = 0;
@@ -406,8 +462,8 @@ void do_issue()
     // fill ROB entry metadata
     ROB[rob_idx].busy = true;
     ROB[rob_idx].ready = false;
-    ROB[rob_idx].instr_id = ins.id;
-    ROB[rob_idx].pc_on_issue = ins.addr;
+    ROB[rob_idx].instr_id = current_ins.id;
+    ROB[rob_idx].pc_on_issue = current_ins.addr;
 
     // Decode operands based on opcode (updated for your formats)
     auto getRegOrImm = [&](int token, int& val, int& tag)
@@ -438,34 +494,34 @@ void do_issue()
             } // immediate or out-of-range treated immediate
         };
 
-    string opname = OPCODES.at(ins.opcode).name;
+    string opname = OPCODES.at(current_ins.opcode).name;
     if (opname == "LOAD")
     {
         // 1 rd rs1 imm  => LOAD rd, imm(rs1)
         ROB[rob_idx].type = "REG";
-        ROB[rob_idx].dest = ins.rd;
+        ROB[rob_idx].dest = current_ins.rd;
         int val, tag;
-        getRegOrImm(ins.rs1, val, tag);  // rs1 (base)
+        getRegOrImm(current_ins.rs1, val, tag);  // rs1 (base)
         if (tag != -1)
             rs.Qj = tag;
         else
             rs.Vj = val;
-        rs.A = ins.rs2_imm;  // imm (offset)
+        rs.A = current_ins.rs2_imm;  // imm (offset)
     }
     else if (opname == "STORE")
     {
         // 2 rs2 rs1 imm => STORE rs2, imm(rs1)
         ROB[rob_idx].type = "STORE";
         int val, tag;
-        getRegOrImm(ins.rs1, val, tag);  // rs1 (base)
+        getRegOrImm(current_ins.rs1, val, tag);  // rs1 (base)
         if (tag != -1)
             rs.Qj = tag;
         else
             rs.Vj = val;
-        rs.A = ins.rs2_imm;  // imm (offset)
+        rs.A = current_ins.rs2_imm;  // imm (offset)
         // rs2 (data to store)
         int val2, tag2;
-        getRegOrImm(ins.rd, val2, tag2);  // rs2 is in ins.rd
+        getRegOrImm(current_ins.rd, val2, tag2);  // rs2 is in current_ins.rd
         if (tag2 != -1)
             rs.Qk = tag2;
         else
@@ -478,8 +534,8 @@ void do_issue()
         ROB[rob_idx].type = "BR";
         ++branch_count;
         int v1, t1, v2, t2;
-        getRegOrImm(ins.rd, v1, t1);   // rs1
-        getRegOrImm(ins.rs1, v2, t2);  // rs2
+        getRegOrImm(current_ins.rd, v1, t1);   // rs1
+        getRegOrImm(current_ins.rs1, v2, t2);  // rs2
         if (t1 != -1)
             rs.Qj = t1;
         else
@@ -488,22 +544,23 @@ void do_issue()
             rs.Qk = t2;
         else
             rs.Vk = v2;
-        // correct PC_at_issue = ins.addr
-        int pc_issue = ins.addr;
+        // correct PC_at_issue = current_ins.addr
+        int pc_issue = current_ins.addr;
 
         // branch target = PC_at_issue + 1 + imm
-        ROB[rob_idx].br_target = pc_issue + 1 + ins.rs2_imm;
+        ROB[rob_idx].br_target = pc_issue + 1 + current_ins.rs2_imm;
     }
     else if (opname == "CALL")
     {
         // 8 0 0 imm => CALL imm
         ROB[rob_idx].type = "CALL";
         ROB[rob_idx].dest = 1;                 // R1 holds return address (logical)
-        ROB[rob_idx].br_target = ins.rs2_imm;  // imm (absolute target)
+        ROB[rob_idx].br_target = current_ins.rs2_imm;  // imm (absolute target)
+        
+        // Save return address (PC + 1) in ROB to be written to R1 at commit
+        ROB[rob_idx].value = wrap16(current_ins.addr + 1);
+        
         // mark R1 as pending (so subsequent reads wait)
-        if (reg_tag[1] != -1) {
-            // if something else already queues R1, that's okay — keep new tag
-        }
         reg_tag[1] = rob_idx;
     }
 
@@ -523,10 +580,10 @@ void do_issue()
     {
         // ALU ops: ADD/SUB/NAND/MUL  (4 rd rs1 rs2)
         ROB[rob_idx].type = "REG";
-        ROB[rob_idx].dest = ins.rd;
+        ROB[rob_idx].dest = current_ins.rd;
         int v1, t1, v2, t2;
-        getRegOrImm(ins.rs1, v1, t1);       // rs1
-        getRegOrImm(ins.rs2_imm, v2, t2);   // rs2
+        getRegOrImm(current_ins.rs1, v1, t1);       // rs1
+        getRegOrImm(current_ins.rs2_imm, v2, t2);   // rs2
         if (t1 != -1)
             rs.Qj = t1;
         else
@@ -545,12 +602,23 @@ void do_issue()
     }
 
     // set instruction metadata
-    ins.issue = cycle_num;
-    ins.rob_idx = rob_idx;
+    current_ins.issue = cycle_num;
+    current_ins.rob_idx = rob_idx;
 
-    // advance fetch queue and PC (speculative fetch)
+    // advance fetch queue and PC
     fetch_queue.pop_front();
-    PC = PC + 1; // sequential next instruction address by default
+    
+    // CALL jumps immediately to target address
+    if (opname == "CALL") {
+        PC = current_ins.rs2_imm;  // Jump to call target
+        // Rebuild fetch queue from new PC
+        fetch_queue.clear();
+        for (size_t i = 0; i < program.size(); ++i) {
+            if (program[i].addr >= PC) fetch_queue.push_back((int)i);
+        }
+    } else {
+        PC = PC + 1; // sequential next instruction address
+    }
 }
 
 // Execute stage: decrement exec_remaining for started RS entries if operands ready
@@ -711,12 +779,14 @@ void do_write()
     }
     else if (opname == "CALL")
     {
-        // No value result; just mark ready so commit can perform jump + save RA
+        // Return address already stored in ROB at issue; just mark ready
         ROB[rs.rob_dest].ready = true;
     }
     else if (opname == "RET")
     {
-        // Just mark ready; commit will read R1 and jump
+        // Store the return address (value of R1) in ROB
+        ROB[rs.rob_dest].value = wrap16(rs.Vj);
+        ROB[rs.rob_dest].br_target = rs.Vj;  // Target address to jump to
         ROB[rs.rob_dest].ready = true;
     }
     else
@@ -767,6 +837,13 @@ void do_commit() {
         program[iid].commit = cycle_num;
     }
 
+    // Log this committed instance so repeated executions are reported separately
+    if (iid >= 0 && iid < (int)program.size()) {
+        Instr snapshot = program[iid];
+        snapshot.id = exec_sequence++;
+        committed_log.push_back(snapshot);
+    }
+
     if (e.type == "REG") {
         int rd = e.dest;
         if (rd > 0 && rd < NUM_REG) {  // R0 is read-only
@@ -780,37 +857,123 @@ void do_commit() {
         if (addr >= 0 && addr < MEM_SIZE) {
             memory_mem[addr] = wrap16(e.value);
         }
+        committed_stores++;
     }
     else if (e.type == "BR") {
         bool taken = (e.value != 0);
         int target = e.br_target;
-        int pc_issue = e.pc_on_issue;
 
         if (taken) {
             mispredictions++;
             PC = target;
-            clear_all_rs_and_rob_younger_than_instr(pc_issue);
+            
+            // Rebuild fetch queue from new PC
+            fetch_queue.clear();
+            for (size_t i = 0; i < program.size(); ++i) {
+                if (program[i].addr >= PC) fetch_queue.push_back((int)i);
+            }
+            
+            // Clear ALL younger instructions after this branch in ROB order
+            int flush_rob_idx = (rob_head + 1) % ROB_SIZE;
+            while (flush_rob_idx != rob_tail) {
+                if (ROB[flush_rob_idx].busy) {
+                    int pid = ROB[flush_rob_idx].instr_id;
+                    if (pid >= 0 && pid < (int)program.size()) {
+                        program[pid].issue = -1;
+                        program[pid].exec_start = -1;
+                        program[pid].exec_end = -1;
+                        program[pid].write = -1;
+                        program[pid].commit = -1;
+                        program[pid].rob_idx = -1;
+                    }
+                    
+                    if (ROB[flush_rob_idx].type == "REG" && ROB[flush_rob_idx].dest >= 0 && ROB[flush_rob_idx].dest < NUM_REG) {
+                        if (reg_tag[ROB[flush_rob_idx].dest] == flush_rob_idx) 
+                            reg_tag[ROB[flush_rob_idx].dest] = -1;
+                    }
+                    if (ROB[flush_rob_idx].type == "CALL" && reg_tag[1] == flush_rob_idx) {
+                        reg_tag[1] = -1;
+                    }
+                    
+                    ROB[flush_rob_idx].clear();
+                    rob_count--;
+                }
+                flush_rob_idx = (flush_rob_idx + 1) % ROB_SIZE;
+            }
+            rob_tail = (rob_head + 1) % ROB_SIZE;
+            
+            // Clear RS entries for flushed instructions
+            for (auto& p : RS_sets) {
+                for (auto& rs : p.second) {
+                    if (rs.busy && rs.instr_id >= 0 && rs.instr_id < (int)program.size()) {
+                        if (program[rs.instr_id].issue == -1) {
+                            rs.clear();
+                        }
+                    }
+                }
+            }
         }
         // if not taken, PC already incremented at issue
     }
     else if (e.type == "CALL") {
-        // Save return address (next sequential PC) in R1
-        int return_addr = e.pc_on_issue + 1;
-        regs[1] = wrap16(return_addr);
+        // Save return address to R1 (value already computed at issue)
+        regs[1] = wrap16(e.value);
         if (reg_tag[1] == rob_head) reg_tag[1] = -1;
-
-        // Jump to call target
-        PC = e.br_target;
-
-        // Flush younger speculative instructions
-        clear_all_rs_and_rob_younger_than_instr(e.pc_on_issue);
+        // PC was already updated at issue, no jump needed here
+        // No flush - CALL is a direct jump, not a misprediction
     }
     else if (e.type == "RET") {
-        // Jump to address in R1
-        int target = regs[1];
-        PC = target;
-
-        clear_all_rs_and_rob_younger_than_instr(e.pc_on_issue);
+        // Jump to return address (stored in br_target during write)
+        PC = e.br_target;
+        
+        // Rebuild fetch queue from new PC
+        fetch_queue.clear();
+        for (size_t i = 0; i < program.size(); ++i) {
+            if (program[i].addr >= PC) fetch_queue.push_back((int)i);
+        }
+        
+        // Clear ALL younger speculative instructions (everything after this RET in ROB)
+        // This is based on ROB position, not PC address
+        int flush_rob_idx = (rob_head + 1) % ROB_SIZE;  // Everything after head (which is the RET being committed)
+        while (flush_rob_idx != rob_tail) {
+            if (ROB[flush_rob_idx].busy) {
+                int pid = ROB[flush_rob_idx].instr_id;
+                if (pid >= 0 && pid < (int)program.size()) {
+                    // Reset instruction timing
+                    program[pid].issue = -1;
+                    program[pid].exec_start = -1;
+                    program[pid].exec_end = -1;
+                    program[pid].write = -1;
+                    program[pid].commit = -1;
+                    program[pid].rob_idx = -1;
+                }
+                
+                // Clear register tags
+                if (ROB[flush_rob_idx].type == "REG" && ROB[flush_rob_idx].dest >= 0 && ROB[flush_rob_idx].dest < NUM_REG) {
+                    if (reg_tag[ROB[flush_rob_idx].dest] == flush_rob_idx) 
+                        reg_tag[ROB[flush_rob_idx].dest] = -1;
+                }
+                if (ROB[flush_rob_idx].type == "CALL" && reg_tag[1] == flush_rob_idx) {
+                    reg_tag[1] = -1;
+                }
+                
+                ROB[flush_rob_idx].clear();
+                rob_count--;
+            }
+            flush_rob_idx = (flush_rob_idx + 1) % ROB_SIZE;
+        }
+        rob_tail = (rob_head + 1) % ROB_SIZE;  // Reset tail to right after head
+        
+        // Clear all RS entries for flushed instructions
+        for (auto& p : RS_sets) {
+            for (auto& rs : p.second) {
+                if (rs.busy && rs.instr_id >= 0 && rs.instr_id < (int)program.size()) {
+                    if (program[rs.instr_id].issue == -1) {  // Was flushed
+                        rs.clear();
+                    }
+                }
+            }
+        }
     }
 
     // Free this ROB entry and advance head
@@ -859,18 +1022,16 @@ void print_report()
 {
     cout << "\n===== Simulation Results =====\n";
     cout << "Cycles: " << cycle_num << "\n";
-    int committed = 0;
-    for (auto& ins : program)
-        if (ins.commit != -1)
-            ++committed;
+    int committed = (int)committed_log.size();
     double ipc = (cycle_num > 0) ? (double)committed / cycle_num : 0.0;
     cout << fixed << setprecision(3) << "IPC: " << ipc << "\n";
-    cout << "Instructions: " << program.size() << "\n";
+    cout << "Instructions (executions): " << committed << "\n";
     cout << "Branches: " << branch_count << "  Mispredictions: " << mispredictions << "\n\n";
+    cout << "Committed stores: " << committed_stores << "\n\n";
 
     cout << left << setw(5) << "ID" << setw(8) << "ADDR" << setw(8) << "OP" << setw(22) << "TEXT"
         << setw(8) << "Issue" << setw(10) << "ExecS" << setw(10) << "ExecE" << setw(8) << "Write" << setw(8) << "Commit" << "\n";
-    for (auto& ins : program)
+    for (auto& ins : committed_log)
     {
         string opname = OPCODES.count(ins.opcode) ? OPCODES.at(ins.opcode).name : "UNK";
         cout << setw(5) << ins.id << setw(8) << ins.addr << setw(8) << opname << setw(22) << ins.text;
@@ -895,6 +1056,20 @@ void print_report()
     }
     if (printed == 0)
         cout << "(none)\n";
+
+    cout << "\nMemory nonzero values (first 32 entries anywhere in memory):\n";
+    int found = 0;
+    for (int i = 0; i < MEM_SIZE && found < 32; ++i)
+    {
+        if (memory_mem[i] != 0)
+        {
+            cout << "[" << i << "]=" << memory_mem[i] << "  ";
+            if (++found % 8 == 0)
+                cout << "\n";
+        }
+    }
+    if (found == 0)
+        cout << "(none)\n";
 }
 
 int main()
@@ -903,8 +1078,8 @@ int main()
     cin.tie(nullptr);
 
     // -------------------- Hardcoded file paths --------------------
-    string progfile = "D:/Courses AUC/Fall 25/Comp. Architecture/Project 2/TomasuloAlgorithm_Simulator/test1.txt";
-    string memfile = "D:/Courses AUC/Fall 25/Comp. Architecture/Project 2/TomasuloAlgorithm_Simulator/test1_mem.txt";
+    string progfile = "C:/AUC/Fall 25/Arch/test1.txt";
+    //string memfile = "D:/Courses AUC/Fall 25/Comp. Architecture/Project 2/TomasuloAlgorithm_Simulator/test1_mem.txt";
 
     // -------------------- Load program --------------------
     if (!load_program_file(progfile))
@@ -913,12 +1088,12 @@ int main()
         return 1;
     }
 
-    // -------------------- Load memory (optional) --------------------
+    /* -------------------- Load memory (optional) --------------------
     if (!load_memory_file(memfile))
     {
         cerr << "Warning: Could not open memory file: " << memfile << "\n";
         // continue; memory stays zero
-    }
+    }*/
 
     // -------------------- Initialize structures --------------------
     init_structures();
@@ -926,7 +1101,7 @@ int main()
     // -------------------- Simulation loop --------------------
     const int max_cycles = DEFAULT_MAX_CYCLES;
     int steps = 0;
-    while (steps < max_cycles)
+    while (steps < max_cycles && (int)committed_log.size() < MAX_EXECUTIONS)
     {
         if (!step())
             break;
