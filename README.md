@@ -1,6 +1,4 @@
-# README.txt
-
-**Project Name:** femTomas – Tomasulo Algorithm Simulator
+**Project Name:** Tomasulo Algorithm Simulator
 **Course:** CSCE 3301 – Computer Architecture
 **Term:** Fall 2025
 
