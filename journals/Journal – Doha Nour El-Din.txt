@@ -1,0 +1,23 @@
+Journal – Doha Nour El-Din
+CSCE 3301 Project 2 – femTomas
+
+All the work was organized efficiently between me and Habeba, and we collaborated closely to complete each stage of the project successfully! *
+
+Contribution:
+Note: For each component implemented, small tests were performed before integrating everything together.
+
+December 3, 2025
+
+Started setting up the Reservation Stations (RS) and Reorder Buffer (ROB) that will be used in the simulator
+
+December 7, 2025
+
+Implemented the Issue stage logic and ensured instructions are dispatched correctly based on availability
+
+December 8, 2025
+
+Added printing functionality and implemented program loading and memory initialization into the simulator
+
+December 9, 2025
+
+Performed testing on the full workflow and fixed several errors identified during execution

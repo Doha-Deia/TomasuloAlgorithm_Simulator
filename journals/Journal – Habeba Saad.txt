@@ -1,0 +1,19 @@
+Journal – Habeba Saad
+CSCE 3301 Project 2 – femTomas
+
+The work distribution between me and Doha was smooth and balanced, and we coordinated every step to achieve the milestone successfully! *
+
+Contribution:
+Note: Each operation implemented was individually tested before full integration.
+
+December 5, 2025
+
+Set up the Register Status table and identified the instruction formats needed for the simulator
+
+December 8, 2025
+
+Implemented the Execute, Write, and Commit stages for all supported instruction types
+
+December 9, 2025
+
+Conducted testing and fixed various errors encountered during simulation
